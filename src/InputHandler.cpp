@@ -204,6 +204,7 @@ void InputHandler::initialize(rdpInput *input)
     d->input = input;
     input->SynchronizeEvent = inputSynchronizeEvent;
     input->MouseEvent = inputMouseEvent;
+    input->RelMouseEvent = inputRelMouseEvent;
     input->ExtendedMouseEvent = inputExtendedMouseEvent;
     input->KeyboardEvent = inputKeyboardEvent;
     input->UnicodeKeyboardEvent = inputUnicodeKeyboardEvent;
@@ -257,6 +258,19 @@ bool InputHandler::mouseEvent(uint16_t x, uint16_t y, uint16_t flags)
     }
     Q_EMIT inputEvent(event);
 
+    return true;
+}
+
+bool InputHandler::relativeMouseEvent(int16_t xDelta, int16_t yDelta, uint16_t flags)
+{
+    d->relativePointerPos += QPointF(xDelta, yDelta);
+    auto event = std::make_shared<QMouseEvent>(QEvent::MouseMove,
+                                               d->relativePointerPos,
+                                               QPointF{},
+                                               Qt::NoButton,
+                                               Qt::NoButton,
+                                               Qt::NoModifier);
+    Q_EMIT inputEvent(event);
     return true;
 }
 
