@@ -174,9 +174,24 @@ void PlasmaScreencastV1Session::start()
 {
     if (auto vm = virtualMonitor()) {
         d->request = d->m_screencasting.createVirtualMonitorStream(vm->name, vm->size, vm->dpr, Screencasting::Metadata);
-    } else if (!activeStream()) {
+    } else if (activeStream() < 0) {
         d->request = d->m_screencasting.createWorkspaceStream(Screencasting::Metadata);
+    } else {
+        const auto screens = qGuiApp->screens();
+        if (activeStream() >= screens.size()) {
+            qCWarning(KRDP) << "Requested monitor index" << activeStream() << "is out of range; falling back to workspace stream";
+            d->request = d->m_screencasting.createWorkspaceStream(Screencasting::Metadata);
+        } else {
+            d->request = d->m_screencasting.createOutputStream(screens.at(activeStream()), Screencasting::Metadata);
+        }
     }
+
+    if (!d->request) {
+        qCWarning(KRDP) << "Failed to create Plasma screencast request";
+        Q_EMIT error();
+        return;
+    }
+
     connect(d->request, &ScreencastingStream::failed, this, &PlasmaScreencastV1Session::error);
     connect(d->request, &ScreencastingStream::created, this, [this](uint nodeId) {
         qCDebug(KRDP) << "Started Plasma session";

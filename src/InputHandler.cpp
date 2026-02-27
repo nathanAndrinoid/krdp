@@ -5,6 +5,8 @@
 #include "InputHandler.h"
 
 #include <QKeyEvent>
+#include <QStringList>
+#include <QtGlobal>
 
 #include <xkbcommon/xkbcommon.h>
 
@@ -14,6 +16,102 @@
 
 namespace KRdp
 {
+namespace
+{
+bool inputLoggingEnabled()
+{
+    static const bool enabled = [] {
+        if (!qEnvironmentVariableIsSet("KRDP_LOG_INPUT")) {
+            return false;
+        }
+
+        const QString value = QString::fromLatin1(qgetenv("KRDP_LOG_INPUT")).trimmed().toLower();
+        return value != QLatin1String("0")
+            && value != QLatin1String("false")
+            && value != QLatin1String("no")
+            && value != QLatin1String("off");
+    }();
+    return enabled;
+}
+
+bool invertTouchpadScroll()
+{
+    if (!qEnvironmentVariableIsSet("KRDP_TOUCHPAD_SCROLL_INVERT")) {
+        return true;
+    }
+
+    const QString value = QString::fromLatin1(qgetenv("KRDP_TOUCHPAD_SCROLL_INVERT")).trimmed().toLower();
+    return value != QLatin1String("0")
+        && value != QLatin1String("false")
+        && value != QLatin1String("no")
+        && value != QLatin1String("off");
+}
+
+QString pointerFlagsDescription(uint16_t flags)
+{
+    QStringList parts;
+
+    if (flags & PTR_FLAGS_MOVE) {
+        parts << QStringLiteral("MOVE");
+    }
+    if (flags & PTR_FLAGS_DOWN) {
+        parts << QStringLiteral("DOWN");
+    }
+    if (flags & PTR_FLAGS_BUTTON1) {
+        parts << QStringLiteral("BTN1");
+    }
+    if (flags & PTR_FLAGS_BUTTON2) {
+        parts << QStringLiteral("BTN2");
+    }
+    if (flags & PTR_FLAGS_BUTTON3) {
+        parts << QStringLiteral("BTN3");
+    }
+    if (flags & PTR_FLAGS_WHEEL || flags & PTR_FLAGS_HWHEEL) {
+        auto axis = flags & WheelRotationMask;
+        if (axis & PTR_FLAGS_WHEEL_NEGATIVE) {
+            axis = (~axis & WheelRotationMask) + 1;
+        }
+        axis *= flags & PTR_FLAGS_WHEEL_NEGATIVE ? 1 : -1;
+
+        if (flags & PTR_FLAGS_WHEEL) {
+            parts << QStringLiteral("VWHEEL(%1)").arg(axis);
+        }
+        if (flags & PTR_FLAGS_HWHEEL) {
+            parts << QStringLiteral("HWHEEL(%1)").arg(axis);
+        }
+    }
+
+    if (parts.isEmpty()) {
+        parts << QStringLiteral("NONE");
+    }
+
+    return parts.join(QLatin1Char('|'));
+}
+
+QString xPointerFlagsDescription(uint16_t flags)
+{
+    QStringList parts;
+
+    if (flags & PTR_FLAGS_MOVE) {
+        parts << QStringLiteral("MOVE");
+    }
+    if (flags & PTR_XFLAGS_DOWN) {
+        parts << QStringLiteral("DOWN");
+    }
+    if (flags & PTR_XFLAGS_BUTTON1) {
+        parts << QStringLiteral("XBTN1");
+    }
+    if (flags & PTR_XFLAGS_BUTTON2) {
+        parts << QStringLiteral("XBTN2");
+    }
+
+    if (parts.isEmpty()) {
+        parts << QStringLiteral("NONE");
+    }
+
+    return parts.join(QLatin1Char('|'));
+}
+}
 
 BOOL inputSynchronizeEvent(rdpInput *input, uint32_t flags)
 {
@@ -31,6 +129,17 @@ BOOL inputMouseEvent(rdpInput *input, uint16_t flags, uint16_t x, uint16_t y)
     auto context = reinterpret_cast<PeerContext *>(input->context);
 
     if (context->inputHandler->mouseEvent(x, y, flags)) {
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
+BOOL inputRelMouseEvent(rdpInput *input, uint16_t flags, int16_t xDelta, int16_t yDelta)
+{
+    auto context = reinterpret_cast<PeerContext *>(input->context);
+
+    if (context->inputHandler->relativeMouseEvent(xDelta, yDelta, flags)) {
         return TRUE;
     }
 
@@ -75,6 +184,8 @@ class KRDP_NO_EXPORT InputHandler::Private
 public:
     RdpConnection *session;
     rdpInput *input;
+    QPointF lastMousePosition{0, 0};
+    QPointF relativePointerPos{0, 0};
 };
 
 InputHandler::InputHandler(KRdp::RdpConnection *session)

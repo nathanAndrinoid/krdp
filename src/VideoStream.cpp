@@ -313,7 +313,16 @@ uint32_t VideoStream::onCapsAdvertise(const RDPGFX_CAPS_ADVERTISE_PDU *capsAdver
         return CHANNEL_RC_INITIALIZATION_ERROR;
     }
 
+    // Some clients advertise unknown/newer versions. Pick the highest version
+    // only from caps that actually support AVC+YUV420.
     auto maxVersion = std::max_element(capsInformation.begin(), capsInformation.end(), [](const auto &first, const auto &second) {
+        const bool firstSupported = first.avcSupported && first.yuv420Supported;
+        const bool secondSupported = second.avcSupported && second.yuv420Supported;
+
+        if (firstSupported != secondSupported) {
+            return !firstSupported && secondSupported;
+        }
+
         return first.version < second.version;
     });
 

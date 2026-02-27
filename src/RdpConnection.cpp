@@ -9,6 +9,7 @@
 
 #include "RdpConnection.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <optional>
 
@@ -18,6 +19,7 @@
 #include <QStandardPaths>
 #include <QTcpSocket>
 #include <QThread>
+#include <QtGlobal>
 
 #include <freerdp/channels/wtsvc.h>
 #include <freerdp/freerdp.h>
@@ -144,6 +146,63 @@ static int pamAuthenticate(const QString &user, const QString &password)
     return 1;
 }
 
+static QString normalizeLoginName(QString userName)
+{
+    userName = userName.trimmed();
+
+    // Some clients send DOMAIN\\user or DOMAIN/user.
+    const int separatorIndex = std::max(userName.lastIndexOf(u'\\'), userName.lastIndexOf(u'/'));
+    if (separatorIndex >= 0 && separatorIndex + 1 < userName.size()) {
+        userName = userName.mid(separatorIndex + 1);
+    }
+
+    return userName.trimmed();
+}
+
+static bool matchesLoginName(const QString &actualName, const QString &configuredName)
+{
+    if (configuredName.isEmpty()) {
+        return false;
+    }
+
+    if (actualName.compare(configuredName, Qt::CaseInsensitive) == 0) {
+        return true;
+    }
+
+    // Some clients send user@domain. Accept when the local part matches.
+    const int atSignIndex = actualName.indexOf(u'@');
+    if (atSignIndex > 0) {
+        const QStringView localPart = QStringView(actualName).left(atSignIndex);
+        if (localPart.compare(configuredName, Qt::CaseInsensitive) == 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static QString authIdentityString(const UINT16 *value, ULONG length)
+{
+    if (!value || length == 0) {
+        return {};
+    }
+
+    return QString::fromUtf16(reinterpret_cast<const char16_t *>(value), static_cast<qsizetype>(length));
+}
+
+static bool nlaEnabledFromEnvironment()
+{
+    if (!qEnvironmentVariableIsSet("KRDP_ENABLE_NLA")) {
+        return false;
+    }
+
+    const QString value = QString::fromLatin1(qgetenv("KRDP_ENABLE_NLA")).trimmed().toLower();
+    return value != QLatin1String("0")
+        && value != QLatin1String("false")
+        && value != QLatin1String("no")
+        && value != QLatin1String("off");
+}
+
 /**
  * FreeRDP callback for the capabilities event.
  */
@@ -183,6 +242,16 @@ BOOL peerActivate(freerdp_peer *peer)
     return FALSE;
 }
 
+BOOL peerLogon(freerdp_peer *peer, const SEC_WINNT_AUTH_IDENTITY *identity, BOOL automatic)
+{
+    auto context = reinterpret_cast<PeerContext *>(peer->context);
+    if (context->connection->onLogon(identity, automatic)) {
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
 BOOL suppressOutput(rdpContext *context, uint8_t allow, const RECTANGLE_16 *)
 {
     auto peerContext = reinterpret_cast<PeerContext *>(context);
@@ -209,6 +278,8 @@ public:
     std::unique_ptr<Clipboard> clipboard;
 
     freerdp_peer *peer = nullptr;
+    bool logonDecisionPresent = false;
+    bool logonAccepted = false;
 
     std::jthread thread;
 };
@@ -349,7 +420,11 @@ void RdpConnection::initialize()
 
     freerdp_settings_set_bool(settings, FreeRDP_RdpSecurity, false);
     freerdp_settings_set_bool(settings, FreeRDP_TlsSecurity, true);
-    freerdp_settings_set_bool(settings, FreeRDP_NlaSecurity, false);
+    // NLA via WinPR SAM can fail on Linux and add a failing pre-auth roundtrip.
+    // Keep it opt-in for clients that explicitly require it.
+    const bool enableNla = nlaEnabledFromEnvironment();
+    freerdp_settings_set_bool(settings, FreeRDP_NlaSecurity, enableNla);
+    qCDebug(KRDP) << "NLA security enabled:" << enableNla;
 
     freerdp_settings_set_uint32(settings, FreeRDP_OsMajorType, OSMAJORTYPE_UNIX);
     // PSEUDO_XSERVER is apparently required for things to work properly.
@@ -389,6 +464,7 @@ void RdpConnection::initialize()
 
     d->peer->Capabilities = peerCapabilities;
     d->peer->Activate = peerActivate;
+    d->peer->Logon = peerLogon;
     d->peer->PostConnect = peerPostConnect;
 
     d->peer->context->update->SuppressOutput = suppressOutput;
@@ -503,6 +579,66 @@ bool RdpConnection::onActivate()
     return true;
 }
 
+bool RdpConnection::onLogon(const SEC_WINNT_AUTH_IDENTITY *identity, BOOL automatic)
+{
+    QString username;
+    QString password;
+
+    if (identity) {
+        const QString user = authIdentityString(identity->User, identity->UserLength);
+        const QString domain = authIdentityString(identity->Domain, identity->DomainLength);
+        password = authIdentityString(identity->Password, identity->PasswordLength);
+        username = domain.isEmpty() ? user : QStringLiteral("%1\\%2").arg(domain, user);
+
+        qCDebug(KRDP) << "Logon callback user:" << username << "automatic:" << (automatic == TRUE) << "passwordLength:" << password.size();
+    } else {
+        qCWarning(KRDP) << "Logon callback did not provide an identity";
+    }
+
+    // Some clients do not provide credentials here and only send them later.
+    // Defer to PostConnect in that case.
+    if (username.isEmpty() && password.isEmpty()) {
+        qCDebug(KRDP) << "Logon callback had no credentials; deferring authentication to PostConnect";
+        d->logonDecisionPresent = false;
+        d->logonAccepted = false;
+        return true;
+    }
+
+    d->logonAccepted = authenticateLogin(username, password);
+    d->logonDecisionPresent = true;
+    return d->logonAccepted;
+}
+
+bool RdpConnection::authenticateLogin(const QString &rawUsername, const QString &password)
+{
+    const QString username = normalizeLoginName(rawUsername);
+
+    qCDebug(KRDP) << "Authenticating RDP login for user" << rawUsername << "(normalized to" << username << ", passwordLength:" << password.size() << ")";
+
+    if (d->server->usePAMAuthentication()) {
+        qCDebug(KRDP) << "Attempting authenticating user with PAM";
+        if (matchesLoginName(username, KUser().loginName()) && pamAuthenticate(KUser().loginName(), password) >= 0) {
+            qCDebug(KRDP) << "PAM authentication succeeded for user" << username;
+            return true;
+        }
+    }
+
+    const auto users = d->server->users();
+    for (const auto &user : users) {
+        if (user.password.isEmpty()) {
+            qCWarning(KRDP) << "Skipping configured RDP user with empty password:" << user.name;
+            continue;
+        }
+        if (matchesLoginName(username, user.name) && user.password == password) {
+            qCDebug(KRDP) << "User" << username << "authenticated successfully";
+            return true;
+        }
+    }
+
+    qCWarning(KRDP) << "Authentication failed for user" << rawUsername;
+    return false;
+}
+
 bool RdpConnection::onPostConnect()
 {
     qCInfo(KRDP) << "New client connected:" << d->peer->hostname << freerdp_peer_os_major_type_string(d->peer) << freerdp_peer_os_minor_type_string(d->peer);
@@ -513,29 +649,29 @@ bool RdpConnection::onPostConnect()
         return false;
     }
 
-    const QString username = QString::fromLatin1(freerdp_settings_get_string(settings, FreeRDP_Username));
-    const QString password = QString::fromLatin1(freerdp_settings_get_string(settings, FreeRDP_Password));
+    if (d->logonDecisionPresent) {
+        qCDebug(KRDP) << "Using authentication result from Logon callback:" << d->logonAccepted;
+        return d->logonAccepted;
+    }
 
-    if (d->server->usePAMAuthentication()) {
-        qCDebug(KRDP) << "Attempting authenticating user with PAM";
-        if (username == KUser().loginName() && pamAuthenticate(username, password) >= 0) {
-            qCDebug(KRDP) << "PAM authentication succeeded for user" << username;
-            return true;
+    QString rawUsername = QString::fromLatin1(freerdp_settings_get_string(settings, FreeRDP_Username));
+    QString password = QString::fromLatin1(freerdp_settings_get_string(settings, FreeRDP_Password));
+
+    // Some clients only expose credentials through the peer identity.
+    if ((rawUsername.isEmpty() || password.isEmpty()) && d->peer->identity.User) {
+        const QString user = authIdentityString(d->peer->identity.User, d->peer->identity.UserLength);
+        const QString domain = authIdentityString(d->peer->identity.Domain, d->peer->identity.DomainLength);
+        const QString identityPassword = authIdentityString(d->peer->identity.Password, d->peer->identity.PasswordLength);
+
+        if (rawUsername.isEmpty()) {
+            rawUsername = domain.isEmpty() ? user : QStringLiteral("%1\\%2").arg(domain, user);
+        }
+        if (password.isEmpty()) {
+            password = identityPassword;
         }
     }
 
-    const auto users = d->server->users();
-    for (auto user : users) {
-        if (user.password.isEmpty()) {
-            return false;
-        }
-        if (user.name == username && user.password == password) {
-            qCDebug(KRDP) << "User" << username << "authenticated successfully";
-            return true;
-        }
-    }
-
-    return false;
+    return authenticateLogin(rawUsername, password);
 }
 
 bool RdpConnection::onClose()

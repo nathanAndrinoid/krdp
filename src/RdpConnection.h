@@ -8,6 +8,7 @@
 #include <thread>
 
 #include <QObject>
+#include <QString>
 
 #include <freerdp/freerdp.h>
 
@@ -103,6 +104,7 @@ private:
     friend BOOL peerCapabilities(freerdp_peer *);
     friend BOOL peerActivate(freerdp_peer *);
     friend BOOL peerPostConnect(freerdp_peer *);
+    friend BOOL peerLogon(freerdp_peer *, const SEC_WINNT_AUTH_IDENTITY *, BOOL);
     friend BOOL suppressOutput(rdpContext *, uint8_t, const RECTANGLE_16 *);
 
     friend class Cursor;
@@ -119,7 +121,9 @@ private:
 
     bool onCapabilities();
     bool onActivate();
+    bool onLogon(const SEC_WINNT_AUTH_IDENTITY *identity, BOOL automatic);
     bool onPostConnect();
+    bool authenticateLogin(const QString &rawUsername, const QString &password);
     bool onClose();
     bool onSuppressOutput(uint8_t allow);
 

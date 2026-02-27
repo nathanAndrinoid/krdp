@@ -8,6 +8,7 @@
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QQueue>
+#include <QtGlobal>
 
 #include <linux/input.h>
 
@@ -25,6 +26,47 @@ using namespace Qt::StringLiterals;
 
 namespace KRdp
 {
+
+namespace
+{
+bool invertTouchpadScroll()
+{
+    if (!qEnvironmentVariableIsSet("KRDP_TOUCHPAD_SCROLL_INVERT")) {
+        return true;
+    }
+
+    const QString value = QString::fromLatin1(qgetenv("KRDP_TOUCHPAD_SCROLL_INVERT")).trimmed().toLower();
+    return value != QLatin1String("0") && value != QLatin1String("false") && value != QLatin1String("no") && value != QLatin1String("off");
+}
+
+double touchpadScrollScale()
+{
+    bool ok = false;
+    const QString value = QString::fromLatin1(qgetenv("KRDP_TOUCHPAD_SCROLL_SCALE")).trimmed();
+    if (!value.isEmpty()) {
+        const double parsed = value.toDouble(&ok);
+        if (ok && parsed > 0.0) {
+            return parsed;
+        }
+    }
+
+    return 0.35;
+}
+
+double mouseScrollScale()
+{
+    bool ok = false;
+    const QString value = QString::fromLatin1(qgetenv("KRDP_MOUSE_SCROLL_SCALE")).trimmed();
+    if (!value.isEmpty()) {
+        const double parsed = value.toDouble(&ok);
+        if (ok && parsed > 0.0) {
+            return parsed;
+        }
+    }
+
+    return 3.0;
+}
+}
 
 static const QString dbusService = QStringLiteral("org.freedesktop.portal.Desktop");
 static const QString dbusPath = QStringLiteral("/org/freedesktop/portal/desktop");
@@ -82,6 +124,8 @@ public:
     bool ignoreNextSystemClipboardChange = false;
 
     QDBusObjectPath sessionPath;
+    int pendingDiscreteWheelX = 0;
+    int pendingDiscreteWheelY = 0;
 };
 
 QString createHandleToken()
@@ -127,6 +171,13 @@ PortalSession::PortalSession()
 
 PortalSession::~PortalSession()
 {
+    const QString sessionPath = d->sessionPath.path();
+    const bool hasValidSessionPath = !sessionPath.isEmpty() && sessionPath != QStringLiteral("/");
+    if (!hasValidSessionPath) {
+        qCDebug(KRDP) << "Closing Freedesktop Portal Session without valid session path";
+        return;
+    }
+
     // Make sure to clear any modifier keys that were pressed when the session closed, otherwise
     // we risk those keys getting stuck and the original session becoming unusable.
     for (auto keycode : {KEY_LEFTCTRL, KEY_RIGHTCTRL, KEY_LEFTSHIFT, KEY_RIGHTSHIFT, KEY_LEFTALT, KEY_RIGHTALT, KEY_LEFTMETA, KEY_RIGHTMETA}) {
@@ -134,7 +185,7 @@ PortalSession::~PortalSession()
         call.waitForFinished();
     }
 
-    auto closeMessage = QDBusMessage::createMethodCall(dbusService, d->sessionPath.path(), dbusSessionInterface, QStringLiteral("Close"));
+    auto closeMessage = QDBusMessage::createMethodCall(dbusService, sessionPath, dbusSessionInterface, QStringLiteral("Close"));
     QDBusConnection::sessionBus().asyncCall(closeMessage);
 
     qCDebug(KRDP) << "Closing Freedesktop Portal Session";
@@ -186,12 +237,74 @@ void PortalSession::sendEvent(const std::shared_ptr<QEvent> &event)
     }
     case QEvent::Wheel: {
         auto we = std::static_pointer_cast<QWheelEvent>(event);
-        auto delta = we->angleDelta();
-        if (delta.y() != 0) {
-            d->remoteInterface->NotifyPointerAxisDiscrete(d->sessionPath, QVariantMap{}, 0 /* Vertical */, delta.y() / 120);
+        const auto delta = we->angleDelta();
+        const auto pixelDelta = we->pixelDelta();
+        const auto position = we->position();
+        const bool hasPixelDelta = !pixelDelta.isNull();
+        const bool hasAngleDelta = !delta.isNull();
+        const bool coarseVertical = (delta.y() == 0) || ((delta.y() % 120) == 0);
+        const bool coarseHorizontal = (delta.x() == 0) || ((delta.x() % 120) == 0);
+        const bool isCoarseWheel = !hasPixelDelta && coarseVertical && coarseHorizontal;
+
+        QVariantMap smoothOptions;
+        if (we->phase() == Qt::ScrollEnd) {
+            smoothOptions.insert(QStringLiteral("finish"), true);
         }
-        if (delta.x() != 0) {
-            d->remoteInterface->NotifyPointerAxisDiscrete(d->sessionPath, QVariantMap{}, 1 /* Horizontal */, delta.x() / 120);
+
+        // Forward smooth deltas for high-resolution wheel/touchpad input.
+        double dx = 0.0;
+        double dy = 0.0;
+        bool sendSmoothAxis = false;
+        if (hasPixelDelta) {
+            dx = pixelDelta.x();
+            dy = pixelDelta.y();
+            sendSmoothAxis = true;
+        } else if (hasAngleDelta && !isCoarseWheel) {
+            dx = static_cast<double>(delta.x());
+            dy = static_cast<double>(delta.y());
+            sendSmoothAxis = true;
+        }
+        const bool likelyTouchpad = sendSmoothAxis
+            && qFuzzyIsNull(position.x())
+            && qFuzzyIsNull(position.y())
+            && qAbs(delta.x()) < 120
+            && qAbs(delta.y()) < 120;
+        if (sendSmoothAxis) {
+            if (likelyTouchpad) {
+                const double scale = touchpadScrollScale();
+                dx *= scale;
+                dy *= scale;
+                if (invertTouchpadScroll()) {
+                    dx = -dx;
+                    dy = -dy;
+                }
+            } else {
+                const double scale = mouseScrollScale();
+                dx *= scale;
+                dy *= scale;
+            }
+        }
+        if (sendSmoothAxis && (dx != 0.0 || dy != 0.0 || smoothOptions.contains(QStringLiteral("finish")))) {
+            d->remoteInterface->NotifyPointerAxis(d->sessionPath, smoothOptions, dx, dy);
+        }
+
+        if (!likelyTouchpad) {
+            const double scale = mouseScrollScale();
+            // Accumulate sub-120 angle deltas so wheel scrolling still works for
+            // clients that send high-resolution ticks.
+            d->pendingDiscreteWheelY += qRound(delta.y() * scale);
+            const int verticalSteps = d->pendingDiscreteWheelY / 120;
+            if (verticalSteps != 0) {
+                d->remoteInterface->NotifyPointerAxisDiscrete(d->sessionPath, QVariantMap{}, 0 /* Vertical */, verticalSteps);
+                d->pendingDiscreteWheelY -= verticalSteps * 120;
+            }
+
+            d->pendingDiscreteWheelX += qRound(delta.x() * scale);
+            const int horizontalSteps = d->pendingDiscreteWheelX / 120;
+            if (horizontalSteps != 0) {
+                d->remoteInterface->NotifyPointerAxisDiscrete(d->sessionPath, QVariantMap{}, 1 /* Horizontal */, horizontalSteps);
+                d->pendingDiscreteWheelX -= horizontalSteps * 120;
+            }
         }
         break;
     }
