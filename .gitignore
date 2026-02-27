@@ -9,3 +9,6 @@
 build*/
 CMakeLists.txt.user
 compile_commands.json
+
+# Zero-size placeholder files (untracked)
+autotests/CMakeLists.txt
