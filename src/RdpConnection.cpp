@@ -202,6 +202,8 @@ public:
 
     qintptr socketHandle;
 
+    qreal clientToHostScaleValue = 1.0;
+
     std::unique_ptr<InputHandler> inputHandler;
     std::unique_ptr<VideoStream> videoStream;
     std::unique_ptr<Cursor> cursor;
@@ -279,6 +281,31 @@ void RdpConnection::close(RdpConnection::CloseReason reason)
     if (d->peer) { // may be null if creating the peer failed
         d->peer->Close(d->peer);
     }
+}
+
+qreal RdpConnection::scrollScale() const
+{
+    return d->server ? d->server->scrollScale() : 2.0;
+}
+
+int RdpConnection::fallbackMaxFrameRate() const
+{
+    return d->server ? d->server->fallbackMaxFrameRate() : 20;
+}
+
+int RdpConnection::fallbackScale() const
+{
+    return d->server ? d->server->fallbackScale() : 2;
+}
+
+qreal RdpConnection::clientToHostScale() const
+{
+    return d->clientToHostScaleValue;
+}
+
+void RdpConnection::setClientToHostScale(qreal scale)
+{
+    d->clientToHostScaleValue = scale;
 }
 
 InputHandler *RdpConnection::inputHandler() const
@@ -522,11 +549,13 @@ bool RdpConnection::onPostConnect()
             qCDebug(KRDP) << "PAM authentication succeeded for user" << username;
             return true;
         }
+        qCDebug(KRDP) << "PAM authentication failed or wrong user, trying configured users list";
     }
 
     const auto users = d->server->users();
     for (auto user : users) {
         if (user.password.isEmpty()) {
+            qCWarning(KRDP) << "Authentication failed: password for user" << user.name << "not yet loaded (e.g. from keychain). Try connecting again.";
             return false;
         }
         if (user.name == username && user.password == password) {
@@ -535,6 +564,8 @@ bool RdpConnection::onPostConnect()
         }
     }
 
+    qCWarning(KRDP) << "Authentication failed: no matching user for" << username
+                    << "(check that the client uses the same username/password as in Remote Desktop settings).";
     return false;
 }
 

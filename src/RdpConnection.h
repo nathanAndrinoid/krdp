@@ -83,6 +83,27 @@ public:
     void close(CloseReason reason = CloseReason::None);
 
     /**
+     * Scroll scale factor for wheel events (from server config).
+     */
+    qreal scrollScale() const;
+
+    /**
+     * Maximum frame rate for uncompressed fallback (from server config).
+     */
+    int fallbackMaxFrameRate() const;
+    /**
+     * Resolution scale for uncompressed fallback, 1/2/4 (from server config).
+     */
+    int fallbackScale() const;
+
+    /**
+     * Scale factor from client coordinates to host (e.g. 2.0 when using half-resolution fallback).
+     * Used to scale mouse position so input lands correctly.
+     */
+    qreal clientToHostScale() const;
+    void setClientToHostScale(qreal scale);
+
+    /**
      * The InputHandler instance associated with this session.
      */
     InputHandler *inputHandler() const;

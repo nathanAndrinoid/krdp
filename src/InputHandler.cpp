@@ -9,6 +9,7 @@
 #include <xkbcommon/xkbcommon.h>
 
 #include "PeerContext_p.h"
+#include "RdpConnection.h"
 
 #include "krdp_logging.h"
 
@@ -135,9 +136,11 @@ bool InputHandler::mouseEvent(uint16_t x, uint16_t y, uint16_t flags)
         }
         axis *= flags & PTR_FLAGS_WHEEL_NEGATIVE ? 1 : -1;
         // The RDP protocol uses 120 units per standard wheel notch
-        // (15 degrees of rotation). Dividing by 8 converts to degrees,
-        // which we store in pixelDelta as a continuous scroll value.
-        auto degrees = axis / 8.0;
+        // (15 degrees of rotation). Dividing by 8 converts to degrees.
+        // Apply scroll scale (configurable, default 2.0) so touchpad two-finger
+        // scroll has adequate sensitivity; store in pixelDelta as scroll value.
+        const qreal scale = d->session->scrollScale();
+        auto degrees = (axis / 8.0) * scale;
         if (flags & PTR_FLAGS_WHEEL) {
             auto event = std::make_shared<QWheelEvent>(position,
                                                        QPointF{},

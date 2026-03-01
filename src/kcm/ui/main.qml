@@ -282,6 +282,50 @@ KCM.ScrollViewKCM {
 
         Item {
             Kirigami.FormData.isSection: true
+            Kirigami.FormData.label: i18nc("title:group Settings for clients that do not support H.264", "Non-H.264 clients (e.g. iPad)")
+        }
+
+        RowLayout {
+            Kirigami.FormData.label: i18nc("@label:spinbox", "Max frame rate:")
+            QQC2.SpinBox {
+                id: fallbackFpsSpinBox
+                from: 5
+                to: 60
+                value: settings.fallbackMaxFrameRate
+                onValueModified: settings.fallbackMaxFrameRate = value
+                KCM.SettingStateBinding {
+                    configObject: settings
+                    settingName: "fallbackMaxFrameRate"
+                }
+            }
+        }
+
+        RowLayout {
+            Kirigami.FormData.label: i18nc("@label:combobox", "Resolution scale:")
+            QQC2.ComboBox {
+                id: fallbackScaleCombo
+                model: [
+                    { value: 1, text: i18nc("@item:inlistbox", "Full (1:1)") },
+                    { value: 2, text: i18nc("@item:inlistbox", "Half (1:2)") },
+                    { value: 4, text: i18nc("@item:inlistbox", "Quarter (1:4)") }
+                ]
+                currentIndex: settings.fallbackScale === 4 ? 2 : (settings.fallbackScale === 2 ? 1 : 0)
+                onCurrentIndexChanged: {
+                    if (currentIndex >= 0 && currentIndex < model.length) {
+                        settings.fallbackScale = model[currentIndex].value;
+                    }
+                }
+                textRole: "text"
+                valueRole: "value"
+                KCM.SettingStateBinding {
+                    configObject: settings
+                    settingName: "fallbackScale"
+                }
+            }
+        }
+
+        Item {
+            Kirigami.FormData.isSection: true
             Kirigami.FormData.label: i18nc("title:group Group of RDP server settings", "Security Certificates")
         }
 

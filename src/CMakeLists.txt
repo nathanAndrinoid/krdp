@@ -57,7 +57,12 @@ qt6_add_dbus_interface(_dbus_sources xdp_dbus_remotedesktop_interface.xml xdp_db
 qt6_add_dbus_interface(_dbus_sources xdp_dbus_screencast_interface.xml xdp_dbus_screencast_interface)
 target_sources(KRdp PRIVATE ${_dbus_sources})
 
-target_include_directories(KRdp PUBLIC ${FreeRDP_INCLUDE_DIR} ${WinPR_INCLUDE_DIR} ${FreeRDP_Server_INCLUDE_DIR})
+target_include_directories(KRdp PUBLIC
+    ${FreeRDP_INCLUDE_DIR}
+    ${WinPR_INCLUDE_DIR}
+    ${FreeRDP_Server_INCLUDE_DIR}
+    ${LibAV_INCLUDE_DIRS}
+)
 
 target_link_libraries(KRdp PUBLIC
     Qt::Core
@@ -78,6 +83,7 @@ target_link_libraries(KRdp PUBLIC
     K::KPipeWire
     K::KPipeWireRecord
     XKB::XKB
+    ${LibAV_LIBRARIES}
 )
 
 set_target_properties(KRdp PROPERTIES

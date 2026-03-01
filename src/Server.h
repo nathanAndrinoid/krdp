@@ -109,6 +109,25 @@ public:
     void setTlsCertificateKey(const std::filesystem::path &newTlsCertificateKey);
 
     /**
+     * Scroll scale factor for touchpad two-finger scroll (RDP wheel axis to pixel delta).
+     * Default is 2.0 to make touchpad scroll feel responsive.
+     */
+    qreal scrollScale() const;
+    void setScrollScale(qreal scale);
+
+    /**
+     * Maximum frame rate for uncompressed fallback (non-H.264 clients, e.g. iPad).
+     */
+    int fallbackMaxFrameRate() const;
+    void setFallbackMaxFrameRate(int fps);
+
+    /**
+     * Resolution scale for uncompressed fallback (1=full, 2=half, 4=quarter).
+     */
+    int fallbackScale() const;
+    void setFallbackScale(int scale);
+
+    /**
      * Emitted whenever a new connection is started.
      *
      * \param connection The new connection that was just started.

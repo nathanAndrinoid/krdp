@@ -127,6 +127,10 @@ PortalSession::PortalSession()
 
 PortalSession::~PortalSession()
 {
+    if (d->sessionPath.path().isEmpty()) {
+        qCDebug(KRDP) << "Closing Freedesktop Portal Session (no session path; portal was never fully created)";
+        return;
+    }
     // Make sure to clear any modifier keys that were pressed when the session closed, otherwise
     // we risk those keys getting stuck and the original session becoming unusable.
     for (auto keycode : {KEY_LEFTCTRL, KEY_RIGHTCTRL, KEY_LEFTSHIFT, KEY_RIGHTSHIFT, KEY_LEFTALT, KEY_RIGHTALT, KEY_LEFTMETA, KEY_RIGHTMETA}) {
@@ -155,6 +159,9 @@ void PortalSession::sendEvent(const std::shared_ptr<QEvent> &event)
 {
     auto encodedStream = stream();
     if (!encodedStream || !encodedStream->isActive()) {
+        return;
+    }
+    if (d->sessionPath.path().isEmpty()) {
         return;
     }
 

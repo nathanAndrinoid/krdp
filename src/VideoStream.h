@@ -118,6 +118,9 @@ private:
     void updateRequestedFrameRate();
 
     class Private;
+    friend void closeUncompressedDecoder(Private *);
+    friend bool ensureUncompressedDecoder(Private *, int, int);
+    friend bool decodeFrameToBgrx(Private *, const VideoFrame &);
     const std::unique_ptr<Private> d;
 };
 

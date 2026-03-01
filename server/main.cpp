@@ -25,10 +25,10 @@ using namespace Qt::StringLiterals;
 int main(int argc, char **argv)
 {
     QApplication application{argc, argv};
-    application.setApplicationName(u"krdp-server"_s);
+    application.setApplicationName(u"krdpserver"_s);
     application.setApplicationDisplayName(u"KRDP Server"_s);
 
-    KAboutData about(u"krdp-server"_s, u"KRDP Server"_s, QStringLiteral(KRdp_VERSION_STRING));
+    KAboutData about(u"krdpserver"_s, u"KRDP Server"_s, QStringLiteral(KRdp_VERSION_STRING));
     KAboutData::setApplicationData(about);
 
     KCrash::initialize();
@@ -91,6 +91,9 @@ int main(int argc, char **argv)
 
     server.setTlsCertificate(certificate);
     server.setTlsCertificateKey(certificateKey);
+    server.setScrollScale(config->scrollScale());
+    server.setFallbackMaxFrameRate(config->fallbackMaxFrameRate());
+    server.setFallbackScale(config->fallbackScale());
 
     // Use parsed username/pw if set
     if (parser.isSet(u"username"_s)) {

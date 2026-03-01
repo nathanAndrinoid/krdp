@@ -62,6 +62,18 @@ endif()
 find_package(Systemd 254 QUIET)
 set_package_properties(Systemd PROPERTIES TYPE OPTIONAL PURPOSE "If available, used by KCM to integrate with systemd to enable/disable the service and show logs")
 
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LibAV REQUIRED
+    libavcodec
+    libavutil
+    libswscale
+)
+set_package_properties(LibAV PROPERTIES
+    TYPE REQUIRED
+    DESCRIPTION "FFmpeg libavcodec, libavutil, libswscale for H.264 decode fallback"
+    PURPOSE "Used to decode H.264 to raw pixels for clients that do not support AVC (e.g. iPad RDP)"
+)
+
 find_package(PAM REQUIRED)
 set_package_properties(PAM PROPERTIES DESCRIPTION "PAM Libraries"
                        URL "https://www.kernel.org/pub/linux/libs/pam/"

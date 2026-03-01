@@ -73,10 +73,74 @@ The following clients are known to work with the server:
 - Thincast Remote Desktop Client
 - Windows Remote Desktop client, at least as shipped with a recent Windows 10.
 
+**iPad (Microsoft Remote Desktop):** The app does not advertise H.264 (AVC). The
+server supports it by decoding H.264 to raw pixels and sending uncompressed
+RDPGFX (the codec all RDPGFX clients must support). To keep bandwidth and
+latency usable, the fallback is configurable in System Settings → Remote Desktop:
+**Max frame rate** (5–60 fps) and **Resolution scale** (Full, Half, Quarter).
+Defaults are 20 fps and half resolution. Build requires libavcodec, libavutil, and
+libswscale (e.g. `ffmpeg` on Arch).
+
 The following clients are known not to work:
 
 - Microsoft's Remote Desktop client for Android. While it should support H.264
-it seems to not enable it.
+  it seems to not enable it.
+- **Some third‑party iPad RDP apps** (e.g. Jump Desktop, aRDP, others) send an
+  RDP negotiation request with type 13. The FreeRDP server only accepts the
+  standard type (0x01, RDP_NEG_REQ), so the connection fails in the negotiation
+  phase with “Incorrect negotiation request type 13”. Use **Microsoft Remote
+  Desktop** on iPad for compatibility; it uses the standard negotiation and
+  is supported via the uncompressed fallback (see iPad note above).
+
+# Development: running your build
+
+When you build from source, the **systemd user service** still runs the
+system-installed `krdpserver` (e.g. from the distro package), not your built
+binary. So you will not see your code or log changes until the service uses
+your build.
+
+**Configure and build (first time or after adding files)**  
+From the project root:
+
+```bash
+cd build
+cmake .. -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+ninja
+cd ..
+```
+
+Or use the project script (configures, builds, and optionally installs):
+
+```bash
+./install-krdp.sh --no-install    # build only, no install
+```
+
+**Option 1 – Point the service at your binary (recommended)**  
+From the project root, after building (binary is in `build/bin/`, not `build/server/`):
+
+```bash
+./stream-krdp-debug.sh --use-binary build/bin/krdpserver
+```
+
+This creates a user systemd drop-in so the service runs that binary. Then run
+`./stream-krdp-debug.sh` as usual to stream logs. Rebuild when you change code;
+the service will use the same path, so the new binary is used on the next start.
+
+**Option 2 – Run in the foreground**  
+No systemd; logs go to the terminal:
+
+```bash
+./stream-krdp-debug.sh --foreground build/bin/krdpserver
+```
+
+**Check which binary the service uses:**
+
+```bash
+systemctl --user show app-org.kde.krdpserver.service -p ExecStart
+```
+
+If you only see messages like `suspend frame ack` and not your debug logs,
+the service is still using the system binary; use `--use-binary` as above.
 
 # Known Issues and Limitations
 

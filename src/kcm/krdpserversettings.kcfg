@@ -39,5 +39,23 @@ SPDX-License-Identifier: BSD-2-Clause
       <label>Autostart the server on login</label>
       <default>false</default>
     </entry>
+    <entry name="ScrollScale" type="Double">
+      <label>Scroll scale factor for touchpad two-finger scroll (RDP wheel axis to pixel delta)</label>
+      <default>2.0</default>
+      <min>0.5</min>
+      <max>10.0</max>
+    </entry>
+    <entry name="FallbackMaxFrameRate" type="Int">
+      <label>Maximum frame rate for clients that do not support H.264 (e.g. iPad). Lower values reduce bandwidth.</label>
+      <default>20</default>
+      <min>5</min>
+      <max>60</max>
+    </entry>
+    <entry name="FallbackScale" type="Int">
+      <label>Resolution scale for non-H.264 clients (1=full, 2=half, 4=quarter). Lower resolution reduces bandwidth.</label>
+      <default>2</default>
+      <min>1</min>
+      <max>4</max>
+    </entry>
   </group>
 </kcfg>

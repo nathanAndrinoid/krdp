@@ -105,8 +105,8 @@ void AbstractSession::setVideoFrameRate(quint32 framerate)
     d->frameRate = framerate;
     if (d->encodedStream) {
         d->encodedStream->setMaxFramerate({framerate, 1});
-        // this buffers 1 second of frames and drops after that
-        d->encodedStream->setMaxPendingFrames(framerate);
+        // Buffer up to 1 second of frames; minimum 3 required by some clients (e.g. iPad RDP).
+        d->encodedStream->setMaxPendingFrames(std::max(framerate, 3u));
     }
 }
 

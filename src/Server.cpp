@@ -32,6 +32,10 @@ public:
 
     std::filesystem::path tlsCertificate;
     std::filesystem::path tlsCertificateKey;
+
+    qreal scrollScale = 2.0;
+    int fallbackMaxFrameRate = 20;
+    int fallbackScale = 2;
 };
 
 Server::Server(QObject *parent)
@@ -159,6 +163,39 @@ void Server::setTlsCertificateKey(const std::filesystem::path &newTlsCertificate
     }
 
     d->tlsCertificateKey = newTlsCertificateKey;
+}
+
+qreal Server::scrollScale() const
+{
+    return d->scrollScale;
+}
+
+void Server::setScrollScale(qreal scale)
+{
+    if (qFuzzyCompare(d->scrollScale, scale)) {
+        return;
+    }
+    d->scrollScale = qBound(0.5, scale, 10.0);
+}
+
+int Server::fallbackMaxFrameRate() const
+{
+    return d->fallbackMaxFrameRate;
+}
+
+void Server::setFallbackMaxFrameRate(int fps)
+{
+    d->fallbackMaxFrameRate = qBound(5, fps, 60);
+}
+
+int Server::fallbackScale() const
+{
+    return d->fallbackScale;
+}
+
+void Server::setFallbackScale(int scale)
+{
+    d->fallbackScale = qBound(1, scale, 4);
 }
 
 void Server::incomingConnection(qintptr handle)

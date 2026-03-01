@@ -7,6 +7,9 @@
 #include <QCoreApplication>
 #include <QDBusInterface>
 #include <QMenu>
+#include <QKeyEvent>
+#include <QMouseEvent>
+#include <QWheelEvent>
 
 #include <KLocalizedString>
 
@@ -36,13 +39,14 @@ public:
         m_sni = sni;
 
         connect(session.get(), &KRdp::AbstractSession::frameReceived, connection->videoStream(), &KRdp::VideoStream::queueFrame);
-        connect(session.get(), &KRdp::AbstractSession::cursorUpdate, this, &SessionWrapper::onCursorUpdate);
+        // QueuedConnection so cursor updates run on main thread (avoids "Cannot create children for a parent that is in a different thread")
+        connect(session.get(), &KRdp::AbstractSession::cursorUpdate, this, &SessionWrapper::onCursorUpdate, Qt::QueuedConnection);
         connect(session.get(), &KRdp::AbstractSession::error, this, &SessionWrapper::sessionError);
         connect(session.get(), &KRdp::AbstractSession::clipboardDataChanged, connection->clipboard(), &KRdp::Clipboard::setServerData);
 
         connect(connection->videoStream(), &KRdp::VideoStream::enabledChanged, this, &SessionWrapper::onVideoStreamEnabledChanged);
         connect(connection->videoStream(), &KRdp::VideoStream::requestedFrameRateChanged, this, &SessionWrapper::onRequestedFrameRateChanged);
-        connect(connection->inputHandler(), &KRdp::InputHandler::inputEvent, session.get(), &KRdp::AbstractSession::sendEvent);
+        connect(connection->inputHandler(), &KRdp::InputHandler::inputEvent, this, &SessionWrapper::onInputEvent);
         connect(connection->clipboard(), &KRdp::Clipboard::clientDataChanged, session.get(), [clipboard = connection->clipboard(), this]() {
             session->setClipboardData(clipboard->getClipboard());
         });
@@ -60,6 +64,27 @@ public:
         update.hotspot = cursor.hotspot;
         update.image = cursor.texture;
         connection->cursor()->update(update);
+    }
+
+    void onInputEvent(const std::shared_ptr<QInputEvent> &event)
+    {
+        if (!connection || !session) {
+            return;
+        }
+        const qreal scale = connection->clientToHostScale();
+        std::shared_ptr<QInputEvent> toSend = event;
+        if (scale != 1.0) {
+            if (auto me = std::dynamic_pointer_cast<QMouseEvent>(event)) {
+                const QPointF p = me->position();
+                const QPointF scaled(p.x() * scale, p.y() * scale);
+                toSend = std::make_shared<QMouseEvent>(me->type(), scaled, me->globalPosition(), me->button(), me->buttons(), me->modifiers());
+            } else if (auto we = std::dynamic_pointer_cast<QWheelEvent>(event)) {
+                const QPointF p = we->position();
+                const QPointF scaled(p.x() * scale, p.y() * scale);
+                toSend = std::make_shared<QWheelEvent>(scaled, we->globalPosition(), we->pixelDelta(), we->angleDelta(), we->buttons(), we->modifiers(), we->phase(), we->inverted());
+            }
+        }
+        session->sendEvent(toSend);
     }
 
     void onVideoStreamEnabledChanged()
